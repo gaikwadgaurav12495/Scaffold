@@ -1,112 +1,111 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: deploy-httpd-server
-  title: Deploy HTTPd Server with Tekton Pipeline
-  description: Scaffold template to deploy an HTTP server using a Tekton pipeline and serve HTML from Git repos
+  name: httpd-server-template
+  title: HTTPD Server Deployment Template
+  description: Create a deployment for HTTPD server with ConfigMaps from specified repositories
   tags:
-    - tekton
     - httpd
-    - kubernetes
-  owner: your-team
+    - webserver
+    - deployment
 spec:
-  type: website  # This is the missing type property, required by the scaffolder processor
+  owner: your-team
+  type: service
   parameters:
-    - title: Application Deployment Parameters
+    - title: Provide Application Information
       required:
-        - repositoryUrl
-        - pvcName
+        - application_name
         - namespace
-        - deploymentName
-        - configMapName
+        - repository_url
+        - config_map_name
+        - pvc_name
       properties:
-        repositoryUrl:
-          title: HTML Repository URL
+        application_name:
+          title: Application Name
           type: string
-          description: The Git repository URL where the HTML files are stored.
-          examples:
-            - https://github.com/gaikwadgaurav12495/test.git
-        pvcName:
-          title: PVC Name
-          type: string
-          description: Name of the PersistentVolumeClaim (PVC) to be used.
+          description: Unique name of the application
+          default: foo-app
         namespace:
           title: Namespace
           type: string
-          description: Kubernetes namespace where the application will be deployed.
-        deploymentName:
-          title: Deployment Name
+          description: Kubernetes namespace
+          default: default
+        repository_url:
+          title: Repository URL
           type: string
-          description: Name of the Kubernetes deployment.
-        configMapName:
+          description: URL of the Git repository containing HTML files
+          default: https://github.com/gaikwadgaurav12495/test2.git
+        config_map_name:
           title: ConfigMap Name
           type: string
-          description: Name of the ConfigMap to use.
+          description: Name of the ConfigMap to create
+          default: test2-configmap
+        pvc_name:
+          title: PVC Name
+          type: string
+          description: Name of the Persistent Volume Claim to use
+          default: html-home
 
   steps:
-    - id: fetch-html-repository
+    - id: fetch-html-repo
       name: Fetch HTML Repository
       action: fetch:template
       input:
-        url: '{{ parameters.repositoryUrl }}'
-        targetPath: './repo'
-      description: "Fetches the HTML repository from Git."
+        url: "${{ parameters.repository_url }}"
+        copyWithoutTemplating:
+          - **/* # Copy all files without templating
+        values:
+          configMapName: ${{ parameters.config_map_name }}
+          pvcName: ${{ parameters.pvc_name }}
+
+    - id: deploy-httpd
+      name: Deploy HTTPD Server
+      action: kubernetes:apply
+      input:
+        manifests:
+          - apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: ${{ parameters.application_name }}
+              namespace: ${{ parameters.namespace }}
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: ${{ parameters.application_name }}
+              template:
+                metadata:
+                  labels:
+                    app: ${{ parameters.application_name }}
+                spec:
+                  containers:
+                    - name: httpd
+                      image: registry.redhat.io/rhel8/httpd-24:1-335.1724231549
+                      ports:
+                        - containerPort: 80
+                      volumeMounts:
+                        - name: html-volume
+                          mountPath: /usr/share/httpd/html
+                  volumes:
+                    - name: html-volume
+                      persistentVolumeClaim:
+                        claimName: ${{ parameters.pvc_name }}
 
     - id: create-configmap
-      name: Create ConfigMap from HTML Files
-      action: exec:run
+      name: Create ConfigMap
+      action: kubernetes:apply
       input:
-        workingDirectory: './repo'
-        command: kubectl
-        args:
-          - create
-          - configmap
-          - '{{ parameters.configMapName }}'
-          - --from-file=index.html=./index.html
-          - -n
-          - '{{ parameters.namespace }}'
-        description: "Creates a ConfigMap from the HTML files in the repository."
+        manifests:
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: ${{ parameters.config_map_name }}
+              namespace: ${{ parameters.namespace }}
+            data:
+              index.html: |
+                # Place your HTML content here or fetch it from the repository
 
-    - id: apply-pipeline
-      name: Apply Tekton Pipeline
-      action: exec:run
-      input:
-        workingDirectory: './repo/pipelines'
-        command: kubectl
-        args:
-          - apply
-          - -f
-          - pipeline.yaml
-        description: "Applies the Tekton pipeline to deploy the HTTP server."
-
-    - id: trigger-pipeline
-      name: Trigger Pipeline Run
-      action: exec:run
-      input:
-        command: tkn
-        args:
-          - pipeline
-          - start
-          - deploy-httpd-pipeline
-          - -p
-          - pvc-name={{ parameters.pvcName }}
-          - -p
-          - namespace={{ parameters.namespace }}
-          - -p
-          - deployment-name={{ parameters.deploymentName }}
-          - -p
-          - configmap-name={{ parameters.configMapName }}
-        description: "Triggers the Tekton pipeline to run with the provided parameters."
-
-    - id: verify-deployment
-      name: Verify Deployment
-      action: exec:run
-      input:
-        command: kubectl
-        args:
-          - get
-          - deployment
-          - '{{ parameters.deploymentName }}'
-          - -n
-          - '{{ parameters.namespace }}'
-        description: "Verifies that the HTTP server has been successfully deployed."
+  output:
+    links:
+      - title: View Deployment
+        url: https://your-k8s-dashboard-url/api/v1/namespaces/${{ parameters.namespace }}/deployments/${{ parameters.application_name }}
