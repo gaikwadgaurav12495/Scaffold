@@ -10,6 +10,7 @@ metadata:
     - kubernetes
   owner: your-team
 spec:
+  type: website  # This is the missing type property, required by the scaffolder processor
   parameters:
     - title: Application Deployment Parameters
       required:
