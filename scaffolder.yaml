@@ -1,83 +1,111 @@
 apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
-  name: deploy-app-pipeline
-  title: Deploy Application via Pipeline
-  description: A template to deploy applications using the OpenShift pipeline across multiple namespaces.
+  name: deploy-httpd-server
+  title: Deploy HTTPd Server with Tekton Pipeline
+  description: Scaffold template to deploy an HTTP server using a Tekton pipeline and serve HTML from Git repos
+  tags:
+    - tekton
+    - httpd
+    - kubernetes
+  owner: your-team
 spec:
-  owner: backstage/dev-hub-team
-  type: service
-
   parameters:
-    - title: Deployment Information
+    - title: Application Deployment Parameters
       required:
         - repositoryUrl
-        - deploymentName
-        - configMapName
         - pvcName
         - namespace
+        - deploymentName
+        - configMapName
       properties:
         repositoryUrl:
-          title: Repository URL
+          title: HTML Repository URL
           type: string
-          description: URL of the Git repository to clone
-          ui:options:
-            rows: 1
-        deploymentName:
-          title: Deployment Name
-          type: string
-          description: Unique name of the deployment
-          ui:options:
-            rows: 1
-        configMapName:
-          title: ConfigMap Name
-          type: string
-          description: Specify the name of the ConfigMap to use
-          ui:options:
-            rows: 1
+          description: The Git repository URL where the HTML files are stored.
+          examples:
+            - https://github.com/gaikwadgaurav12495/test.git
         pvcName:
           title: PVC Name
           type: string
-          description: Specify the name of the PVC to use for the repository
-          ui:options:
-            rows: 1
+          description: Name of the PersistentVolumeClaim (PVC) to be used.
         namespace:
-          title: Namespace Name
+          title: Namespace
           type: string
-          description: Specify the Kubernetes namespace for the deployment
-          ui:autofocus: true
-          ui:options:
-            rows: 1
+          description: Kubernetes namespace where the application will be deployed.
+        deploymentName:
+          title: Deployment Name
+          type: string
+          description: Name of the Kubernetes deployment.
+        configMapName:
+          title: ConfigMap Name
+          type: string
+          description: Name of the ConfigMap to use.
 
   steps:
-    - id: fetch-base
-      name: Fetch Base Template
+    - id: fetch-html-repository
+      name: Fetch HTML Repository
       action: fetch:template
       input:
-        url: ./template
-        values:
-          repositoryUrl: ${{ parameters.repositoryUrl }}
-          deploymentName: ${{ parameters.deploymentName }}
-          configMapName: ${{ parameters.configMapName }}
-          pvcName: ${{ parameters.pvcName }}
-          namespace: ${{ parameters.namespace }}
+        url: '{{ parameters.repositoryUrl }}'
+        targetPath: './repo'
+      description: "Fetches the HTML repository from Git."
 
-    - id: register
-      name: Register Component
-      action: catalog:register
+    - id: create-configmap
+      name: Create ConfigMap from HTML Files
+      action: exec:run
       input:
-        repoContentsUrl: ${{ steps.fetch-base.output.repoContentsUrl }}
-        catalogInfoPath: '/catalog-info.yaml'
+        workingDirectory: './repo'
+        command: kubectl
+        args:
+          - create
+          - configmap
+          - '{{ parameters.configMapName }}'
+          - --from-file=index.html=./index.html
+          - -n
+          - '{{ parameters.namespace }}'
+        description: "Creates a ConfigMap from the HTML files in the repository."
 
-    - id: deploy-pipeline
-      name: Deploy Application
-      action: tekton:run
+    - id: apply-pipeline
+      name: Apply Tekton Pipeline
+      action: exec:run
       input:
-        pipeline: deploy-app-pipeline
-        parameters:
-          repository-url: ${{ parameters.repositoryUrl }}
-          image-name: "registry.redhat.io/rhel8/httpd-24:1-335.1724231549"  # Default value
-          deployment-name: ${{ parameters.deploymentName }}
-          configmap-name: ${{ parameters.configMapName }}
-          pvc-name: ${{ parameters.pvcName }}
-          namespace: ${{ parameters.namespace }}
+        workingDirectory: './repo/pipelines'
+        command: kubectl
+        args:
+          - apply
+          - -f
+          - pipeline.yaml
+        description: "Applies the Tekton pipeline to deploy the HTTP server."
+
+    - id: trigger-pipeline
+      name: Trigger Pipeline Run
+      action: exec:run
+      input:
+        command: tkn
+        args:
+          - pipeline
+          - start
+          - deploy-httpd-pipeline
+          - -p
+          - pvc-name={{ parameters.pvcName }}
+          - -p
+          - namespace={{ parameters.namespace }}
+          - -p
+          - deployment-name={{ parameters.deploymentName }}
+          - -p
+          - configmap-name={{ parameters.configMapName }}
+        description: "Triggers the Tekton pipeline to run with the provided parameters."
+
+    - id: verify-deployment
+      name: Verify Deployment
+      action: exec:run
+      input:
+        command: kubectl
+        args:
+          - get
+          - deployment
+          - '{{ parameters.deploymentName }}'
+          - -n
+          - '{{ parameters.namespace }}'
+        description: "Verifies that the HTTP server has been successfully deployed."
