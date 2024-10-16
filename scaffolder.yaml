@@ -53,10 +53,7 @@ spec:
       input:
         url: "${{ parameters.repository_url }}"
         copyWithoutTemplating:
-          - **/* # Copy all files without templating
-        values:
-          configMapName: ${{ parameters.config_map_name }}
-          pvcName: ${{ parameters.pvc_name }}
+          - . # Copy all files in the root without templating
 
     - id: deploy-httpd
       name: Deploy HTTPD Server
